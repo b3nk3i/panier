@@ -6,6 +6,7 @@ object Dependencies {
     val googleCloud = "1.108.0"
 
     val cats = "2.1.1"
+    val catsMtl = "0.7.0"
     val catsEffect = "2.1.3"
     val newtype = "0.4.4"
 
@@ -20,6 +21,7 @@ object Dependencies {
     val catsEffect    = "org.typelevel" %% "cats-effect" % Versions.catsEffect
     val newtype       = "io.estatico" %% "newtype" % Versions.newtype
     val googleStorage = "com.google.cloud" % "google-cloud-storage" % Versions.googleCloud
+    val catsMtl       = "org.typelevel" %% "cats-mtl-core" % "0.7.0"
   }
 
   object CompilerPlugins {

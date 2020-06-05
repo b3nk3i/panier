@@ -17,6 +17,7 @@ lazy val root = (project in file("."))
       CompilerPlugins.kindProjector,
       Libraries.cats,
       Libraries.catsEffect,
+      Libraries.catsMtl,
       Libraries.newtype,
       Libraries.googleStorage
     )

@@ -4,50 +4,52 @@ import java.io.ByteArrayOutputStream
 
 import cats.effect.{Blocker, Concurrent, ContextShift, Resource}
 import cats.implicits._
-import cats.{ApplicativeError, Inject}
+import cats.mtl.FunctorRaise
+import cats.{Inject, MonadError}
 import com.google.cloud.storage.{Blob, BlobId, BlobInfo, Storage}
-import org.benkei.storage.model.{Bucket, ObjectStored}
+import org.benkei.storage.model.StorageError.{DeserializeError, ObjectNotFoundError}
+import org.benkei.storage.model.{Bucket, ObjectStored, StorageError}
 
 trait BucketService[F[_]] {
-  def create[E: Inject[*, Array[Byte]]](blobId: ObjectStored.Id, content: E): F[ObjectStored.Id]
-
-  def get[E: Inject[*, Array[Byte]]](id: ObjectStored.Id): F[E]
+  def put[E: Inject[*, Array[Byte]]](blobId: ObjectStored.Id, content: E): F[ObjectStored.Id]
+  def get[E: Inject[*, Array[Byte]]](id:     ObjectStored.Id): F[E]
 }
 
 object BucketService {
 
   def apply[F[_]: Concurrent: ContextShift](blocker: Blocker, client: Storage)(implicit
-    E: ApplicativeError[F, Throwable]
+    FR: FunctorRaise[F, StorageError],
+    ME: MonadError[F, Throwable]
   ): BucketService[F] =
     new BucketService[F] {
 
-      override def create[A: Inject[*, Array[Byte]]](
+      override def put[A: Inject[*, Array[Byte]]](
         id:      ObjectStored.Id,
         content: A
-      ): F[ObjectStored.Id] =
+      ): F[ObjectStored.Id] = {
         blocker.delay {
           val serialise: A => Array[Byte] = Inject[A, Array[Byte]].inj
           val created = client.create(blobInfo(id), serialise(content))
           fromBlobId(created.getBlobId)
         }
+      }
 
       override def get[A: Inject[*, Array[Byte]]](id: ObjectStored.Id): F[A] = {
-
         val deserialize: Array[Byte] => F[A] = b =>
           F.delay(Inject[A, Array[Byte]].prj(b)).flatMap {
             case Some(value) => F.pure(value)
-            case None        => E.raiseError[A](new Exception(s"Failed to deserialize ${id}."))
+            case None        => FR.raise[A](DeserializeError(id))
           }
 
-        blocker.delay {
+        blocker.blockOn {
           Option(client.get(blobId(id))).filter(_.exists()) match {
             case Some(blob) => download(blob).flatMap(deserialize)
-            case None       => E.raiseError[A](new NoSuchElementException(s"${id} not found."))
+            case None       => FR.raise[A](ObjectNotFoundError(id))
           }
-        }.flatten
+        }
       }
 
-      def download[F[_]: Concurrent, E: Inject[*, Array[Byte]]](blob: Blob): F[Array[Byte]] = {
+      def download[E: Inject[*, Array[Byte]]](blob: Blob): F[Array[Byte]] = {
         Resource
           .fromAutoCloseable(F.delay(new ByteArrayOutputStream()))
           .evalTap(os => F.delay(blob.downloadTo(os)))
@@ -63,8 +65,8 @@ object BucketService {
     )
   }
 
-  def blobId(blobId: ObjectStored.Id): BlobId = {
-    blobId match {
+  def blobId(id: ObjectStored.Id): BlobId = {
+    id match {
       case ObjectStored.Id(bucketName, name, Some(gen)) =>
         BlobId.of(bucketName.value, name.value, gen.value)
       case ObjectStored.Id(bucketName, name, None) =>
